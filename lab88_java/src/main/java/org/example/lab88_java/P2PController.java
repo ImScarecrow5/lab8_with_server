@@ -29,6 +29,8 @@ public class P2PController {
     @FXML private ComboBox<String> connectionMode;
     @FXML private TextField serverIpField;
     @FXML private TextField serverPortField;
+    @FXML private TextField searchNickField;
+    @FXML private Button btnSearch;
 
     private ObservableList<String> peerList = FXCollections.observableArrayList();
     private MulticastDiscovery discovery;
@@ -37,6 +39,9 @@ public class P2PController {
     private PeerInfo selectedPeer;
     private volatile boolean isCallActive = false;
     private ScheduledExecutorService scheduler;
+    private Socket serverSocket;
+    private PrintWriter serverOut;
+    private BufferedReader serverIn;
 
     // Режим подключения
     private enum Mode { LAN, SERVER }
@@ -75,36 +80,111 @@ public class P2PController {
             int udp = Integer.parseInt(txtUdp.getText());
             String nick = txtNick.getText();
 
-            // Запускаем discovery (LAN)
-            discovery = new MulticastDiscovery(nick, tcp);
-            discovery.setOnPeerUpdate(peer -> {
-                Platform.runLater(() -> {
-                    if (!peerList.contains(peer.toString())) {
-                        peerList.add(peer.toString());
-                    }
-                });
-            });
-            discovery.start();
+            String mode = connectionMode.getValue();
 
-            // Запускаем TCP signaling
-            signaling = new TCPSignaling(tcp, this::onSignal);
-            signaling.startServer();
-
-            // Инициализируем аудио
-            audio = new AudioManager(udp);
-
-            // Если режим сервера - регистрируемся
-            if (currentMode == Mode.SERVER) {
-                registerWithServer(nick, tcp, udp);
+            if ("Сервер (интернет)".equals(mode)) {
+                // Подключаемся к серверу для регистрации
+                connectToServer(nick, tcp, udp);
+            } else {
+                // LAN режим
+                discovery = new MulticastDiscovery(nick, tcp);
+                discovery.start();
+                signaling = new TCPSignaling(tcp, this::onSignal);
+                signaling.startServer();
             }
 
+            audio = new AudioManager(udp);
             btnStart.setDisable(true);
-            updateStatus("Узел запущен. Режим: " +
-                    (currentMode == Mode.LAN ? "LAN" : "Сервер"));
+            updateStatus("Узел запущен. Режим: " + mode);
             startPeerListUpdater();
 
         } catch (Exception e) {
             showAlert("Ошибка", "Не удалось запустить узел: " + e.getMessage());
+        }
+    }
+
+    private void connectToServer(String nick, int tcp, int udp) {
+        new Thread(() -> {
+            try {
+                String serverIp = serverIpField.getText();
+                int serverPort = Integer.parseInt(serverPortField.getText());
+
+                serverSocket = new Socket(serverIp, serverPort);
+                serverOut = new PrintWriter(serverSocket.getOutputStream(), true);
+                serverIn = new BufferedReader(new InputStreamReader(serverSocket.getInputStream()));
+
+                // REGISTER|Nick|TcpPort|UdpPort
+                serverOut.println("REGISTER|" + nick + "|" + tcp + "|" + udp);
+
+                // Читаем ответ
+                String response = serverIn.readLine();
+                Platform.runLater(() -> {
+                    if (response != null && response.startsWith("OK")) {
+                        updateStatus("Зарегистрирован на сервере");
+                        btnSearch.setDisable(false);
+                    } else {
+                        updateStatus("Ошибка регистрации: " + response);
+                    }
+                });
+
+                // Читаем ответы от сервера (FOUND, CALL_DATA и т.д.)
+                String line;
+                while ((line = serverIn.readLine()) != null) {
+                    handleServerResponse(line);
+                }
+
+            } catch (Exception e) {
+                Platform.runLater(() -> updateStatus("Ошибка сервера: " + e.getMessage()));
+            }
+        }).start();
+    }
+
+    private void handleServerResponse(String msg) {
+        Platform.runLater(() -> {
+            if (msg.startsWith("FOUND|")) {
+                // FOUND|IP|TcpPort|UdpPort
+                String[] parts = msg.substring(6).split("\\|");
+                if (parts.length >= 3) {
+                    String ip = parts[0];
+                    int tcp = Integer.parseInt(parts[1]);
+                    int udp = Integer.parseInt(parts[2]);
+
+                    updateStatus("Найден: " + searchNickField.getText() + " @ " + ip);
+
+                    // Сохраняем найденного пира
+                    selectedPeer = new PeerInfo(searchNickField.getText(), ip, tcp, udp);
+                    btnCall.setDisable(false);
+
+                    showAlert("Поиск", "Найден: " + searchNickField.getText() +
+                            "\nIP: " + ip + "\nTCP: " + tcp + "\nUDP: " + udp);
+                }
+            } else if (msg.startsWith("CALL_DATA|")) {
+                // Обработка данных для звонка
+                handleCallData(msg);
+            } else if (msg.equals("NOT_FOUND")) {
+                updateStatus("Пользователь не найден");
+                showAlert("Поиск", "Пользователь не найден или не в сети");
+            } else if (msg.equals("PONG")) {
+                // Keep-alive ответ
+            }
+        });
+    }
+
+    private void handleCallData(String msg) {
+        // CALL_DATA|IP|TcpPort|UdpPort|CallerUdp
+        String[] parts = msg.substring(10).split("\\|");
+        if (parts.length >= 4) {
+            String ip = parts[0];
+            int tcp = Integer.parseInt(parts[1]);
+            int udp = Integer.parseInt(parts[2]);
+            int callerUdp = Integer.parseInt(parts[3]);
+
+            // Подключаемся к инициатору звонка
+            boolean connected = signaling.connect(ip, tcp);
+            if (connected) {
+                signaling.send("CALL_ACCEPTED|" + audio.getUdpPort());
+                startAudioStream(ip, callerUdp);
+            }
         }
     }
 
