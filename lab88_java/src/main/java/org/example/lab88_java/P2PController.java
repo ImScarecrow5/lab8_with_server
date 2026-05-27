@@ -61,8 +61,9 @@ public class P2PController {
                 });
 
         // Настройка полей сервера
-        serverIpField.setText("localhost");
-        serverPortField.setText("7777");
+        btnSearch.setDisable(true);
+        serverIpField.setText("92.241.27.52"); // или ваш IP сервера
+        serverPortField.setText("7777");;
 
         listPeers.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null && discovery != null) {
