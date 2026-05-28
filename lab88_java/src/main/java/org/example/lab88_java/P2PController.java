@@ -9,10 +9,7 @@ import javafx.scene.control.*;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.Socket;
+import java.net.*;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -37,6 +34,7 @@ public class P2PController {
     private ScheduledExecutorService scheduler;
     private String currentMode = "LAN";
 
+    // Работа с сервером (режим "Сервер")
     private Socket serverSocket;
     private PrintWriter serverOut;
     private BufferedReader serverIn;
@@ -90,6 +88,7 @@ public class P2PController {
         }
     }
 
+    // ========================= РЕЖИМ LAN (прямое P2P) =========================
     private void startLanMode(String nick, int tcp, int udp) throws Exception {
         discovery = new MulticastDiscovery(nick, tcp);
         discovery.start();
@@ -100,6 +99,7 @@ public class P2PController {
         scheduler.scheduleAtFixedRate(() -> Platform.runLater(this::updatePeerList), 0, 3, TimeUnit.SECONDS);
     }
 
+    // ========================= РЕЖИМ СЕРВЕР (ретранслятор) =========================
     private void connectToServer(String nick, int tcp, int udp) {
         new Thread(() -> {
             try {
@@ -117,6 +117,7 @@ public class P2PController {
                     handleStop();
                     return;
                 }
+                final String finalNick = nick;
                 Platform.runLater(() -> {
                     isRegistered = true;
                     btnSearch.setDisable(false);
@@ -124,7 +125,7 @@ public class P2PController {
                     log("Регистрация успешна");
                 });
 
-                // 3. Отправка UDP‑endpoint на сервер
+                // 3. Отправка UDP‑endpoint на сервер (чтобы сервер знал, откуда получать аудио)
                 try {
                     DatagramSocket udpNotify = new DatagramSocket(udp);
                     byte[] dummy = new byte[0];
@@ -133,20 +134,21 @@ public class P2PController {
                     DatagramPacket p = new DatagramPacket(dummy, 0, serverAddr, serverPort);
                     udpNotify.send(p);
                     udpNotify.close();
-                    serverOut.println("SET_UDP_ENDPOINT|" + nick);
-                    log("UDP endpoint отправлен");
+                    serverOut.println("SET_UDP_ENDPOINT|" + finalNick);
+                    log("UDP endpoint отправлен на сервер");
                 } catch (Exception e) {
-                    log("Ошибка UDP endpoint: " + e.getMessage());
+                    log("Ошибка отправки UDP endpoint: " + e.getMessage());
                 }
 
-                // 4. Настройка AudioManager на отправку аудио через сервер
-                if (audio != null) {
-                    InetAddress serverAddr = InetAddress.getByName(txtServerIp.getText());
-                    int serverPort = Integer.parseInt(txtServerPort.getText());
-                    audio.setServerTarget(serverAddr, serverPort);
+                // 4. Настройка AudioManager на отправку аудио на сервер
+                if (audio == null) {
+                    audio = new AudioManager(udp);
                 }
+                InetAddress serverAddr = InetAddress.getByName(txtServerIp.getText());
+                int serverPort = Integer.parseInt(txtServerPort.getText());
+                audio.setServerTarget(serverAddr, serverPort);
 
-                // 5. Запуск TCP‑сигналинга (для обратной совместимости)
+                // 5. Запуск TCP‑сигналинга (в режиме сервера он почти не используется, но пусть будет)
                 signaling = new TCPSignaling(tcp, this::onSignal);
                 signaling.startServer();
 
@@ -158,30 +160,20 @@ public class P2PController {
                 }
             } catch (Exception e) {
                 Platform.runLater(() -> {
-                    showAlert("Ошибка подключения", e.getMessage());
+                    showAlert("Ошибка подключения к серверу", e.getMessage());
                     handleStop();
                 });
             }
         }).start();
     }
 
-    @FXML
-    private void handleSearch() {
-        if (!isRegistered || serverOut == null) {
-            updateStatus("Дождитесь регистрации на сервере");
-            return;
-        }
-        final String target = txtSearchNick.getText().trim();
-        if (target.isEmpty()) return;
-        serverOut.println("LOOKUP|" + target);
-        log("Поиск: " + target);
-    }
-
+    // Обработка сообщений от сервера
     private void handleServerResponse(String msg) {
         if (msg.startsWith("FOUND|")) {
-            final String[] p = msg.substring(6).split("\\|");
+            String[] p = msg.substring(6).split("\\|");
             if (p.length >= 3) {
-                foundServerPeer = new PeerInfo(txtSearchNick.getText(), p[0], Integer.parseInt(p[1]), Integer.parseInt(p[2]));
+                foundServerPeer = new PeerInfo(txtSearchNick.getText(), p[0],
+                        Integer.parseInt(p[1]), Integer.parseInt(p[2]));
                 log("Найден: " + foundServerPeer);
                 btnCall.setDisable(false);
                 updateStatus("Собеседник найден. Нажмите 'Позвонить'.");
@@ -190,9 +182,32 @@ public class P2PController {
             log("Пользователь не найден");
             updateStatus("Не найден в сети");
         } else if (msg.startsWith("CALL_DATA|")) {
-            handleCallData(msg);
+            // Вызов от нас принят, начинаем разговор через сервер
+            updateStatus("Вызов установлен. Разговор через сервер.");
+            startRelayCall();
         } else if (msg.startsWith("INCOMING_CALL|")) {
             handleIncomingCall(msg);
+        } else if (msg.startsWith("CALL_ACCEPTED|")) {
+            // Вызывающий получает подтверждение от вызываемого
+            startRelayCall();
+        } else if (msg.equals("CALL_REJECTED")) {
+            updateStatus("Вызов отклонён");
+            btnCall.setDisable(false);
+        }
+    }
+
+    private void startRelayCall() {
+        if (audio != null && !isCallActive) {
+            isCallActive = true;
+            Platform.runLater(() -> {
+                btnCall.setDisable(true);
+                btnEnd.setDisable(false);
+                btnPushToTalk.setDisable(false);
+                updateStatus("💬 Разговор идёт через сервер");
+                log("Аудио ретранслируется через сервер");
+            });
+            // Аудиопоток уже настроен на отправку на сервер в методе connectToServer,
+            // и сервер сам ретранслирует пакеты собеседнику.
         }
     }
 
@@ -210,9 +225,10 @@ public class P2PController {
                 alert.setContentText("Звонит: " + callerNick + "\nПринять вызов?");
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
-                        serverOut.println("CALL_ACCEPT|" + callerNick + "|" + audio.getUdpPort());
-                        updateStatus("Вызов принят. Ожидаем начала разговора...");
-                        log("✅ Принят звонок от " + callerNick + " (ретранслятор)");
+                        // Отправляем подтверждение серверу: CALL_ACCEPT|мойНик|никЗвонящего
+                        serverOut.println("CALL_ACCEPT|" + txtNick.getText() + "|" + callerNick);
+                        updateStatus("Вызов принят. Ожидание соединения...");
+                        log("✅ Принят звонок от " + callerNick);
                     } else {
                         serverOut.println("CALL_REJECT|" + callerNick);
                         updateStatus("Звонок отклонён");
@@ -222,27 +238,16 @@ public class P2PController {
         }
     }
 
-    private void handleCallData(String msg) {
-        final String[] p = msg.substring(10).split("\\|");
-        if (p.length >= 4) {
-            final String ip = p[0];
-            final int tcp = Integer.parseInt(p[1]);
-            final int udp = Integer.parseInt(p[3]);
-
-            // Запускаем подключение в фоне, чтобы не висло приложение
-            new Thread(() -> {
-                boolean connected = signaling.connect(ip, tcp);
-                Platform.runLater(() -> {
-                    if (connected) {
-                        signaling.send("CALL_ACCEPTED|" + (audio != null ? audio.getUdpPort() : 0));
-                        startAudioStream(ip, udp);
-                    } else {
-                        updateStatus("Не удалось подключиться к собеседнику");
-                        btnCall.setDisable(false);
-                    }
-                });
-            }).start();
+    @FXML
+    private void handleSearch() {
+        if (!isRegistered || serverOut == null) {
+            updateStatus("Дождитесь регистрации на сервере");
+            return;
         }
+        final String target = txtSearchNick.getText().trim();
+        if (target.isEmpty()) return;
+        serverOut.println("LOOKUP|" + target);
+        log("Поиск: " + target);
     }
 
     @FXML
@@ -252,12 +257,14 @@ public class P2PController {
             showAlert("Ошибка", "Собеседник не выбран или не найден");
             return;
         }
+
         if ("Сервер".equals(currentMode)) {
+            // Вызов через сервер
             serverOut.println("CALL|" + txtNick.getText() + "|" + (audio != null ? audio.getUdpPort() : 0) + "|" + target.nickname);
             updateStatus("Вызов инициирован через сервер...");
             log("Инициация вызова через ретранслятор");
         } else {
-            // LAN режим остаётся без изменений (прямое соединение)
+            // LAN режим: прямое TCP-соединение
             new Thread(() -> {
                 boolean connected = signaling.connect(target.ip, target.tcpPort);
                 Platform.runLater(() -> {
@@ -273,7 +280,12 @@ public class P2PController {
 
     @FXML
     private void handleEnd() {
-        if (signaling != null) signaling.send("CALL_END");
+        if ("Сервер".equals(currentMode) && serverOut != null) {
+            // Сообщаем серверу, что вызов завершён (можно расширить протокол)
+            serverOut.println("CALL_END|" + txtNick.getText());
+        } else if (signaling != null) {
+            signaling.send("CALL_END");
+        }
         stopCall();
         log("Звонок завершён");
     }
@@ -291,7 +303,9 @@ public class P2PController {
     @FXML
     private void handleStop() {
         try {
-            if (serverOut != null && isRegistered) serverOut.println("UNREGISTER|" + txtNick.getText());
+            if (serverOut != null && isRegistered) {
+                serverOut.println("UNREGISTER|" + txtNick.getText());
+            }
             if (audio != null) audio.stopCall();
             if (signaling != null) signaling.stop();
             if (discovery != null) discovery.stop();
@@ -300,7 +314,6 @@ public class P2PController {
         } catch (Exception e) {
             log("Ошибка при остановке: " + e.getMessage());
         }
-
         isCallActive = false;
         isRegistered = false;
         updateUIState(false);
@@ -311,6 +324,7 @@ public class P2PController {
         log("Узел остановлен");
     }
 
+    // Сигналы от TCPSignaling (только для LAN)
     private void onSignal(String msg) {
         Platform.runLater(() -> {
             if (msg.startsWith("CALL_START|")) {
@@ -321,10 +335,12 @@ public class P2PController {
                     log("Входящий звонок (LAN)");
                 } catch (Exception e) { log("Ошибка вызова"); }
             } else if (msg.startsWith("CALL_ACCEPTED|")) {
-                int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
-                String ip = (selectedPeer != null) ? selectedPeer.ip : foundServerPeer.ip;
-                startAudioStream(ip, remoteUdp);
-                log("Разговор начался");
+                try {
+                    final int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
+                    final String ip = selectedPeer != null ? selectedPeer.ip : (foundServerPeer != null ? foundServerPeer.ip : "127.0.0.1");
+                    startAudioStream(ip, remoteUdp);
+                    log("Разговор начался (LAN)");
+                } catch (Exception e) { log("Ошибка аудио"); }
             } else if (msg.equals("CALL_END")) {
                 handleEnd();
             }
@@ -339,7 +355,7 @@ public class P2PController {
             btnCall.setDisable(true);
             btnEnd.setDisable(false);
             btnPushToTalk.setDisable(false);
-            updateStatus("Разговор идёт");
+            updateStatus("Разговор идёт (P2P)");
         } catch (Exception e) { updateStatus("Ошибка аудио"); }
     }
 

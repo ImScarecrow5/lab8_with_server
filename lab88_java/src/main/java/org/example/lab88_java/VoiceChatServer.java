@@ -204,14 +204,14 @@ public class VoiceChatServer {
 
     private void handleCallAccept(String[] parts) {
         if (parts.length < 3) return;
-        String targetNick = parts[1]; // кто принимает
-        String callerNick = parts[2]; // кому принимает
+        String targetNick = parts[1]; // принимающий
+        String callerNick = parts[2]; // звонящий
         ClientInfo caller = clients.get(callerNick);
         if (caller != null) {
             caller.out.println("CALL_ACCEPTED|READY");
         }
-        // Можно также удалить вызов из activeCalls, но сохраним для ретрансляции
-        // activeCalls.put(targetNick, callerNick); // на случай двусторонней ретрансляции
+        // Добавляем обратную связь, чтобы оба могли отправлять аудио
+        activeCalls.put(targetNick, callerNick);
     }
 
     private void handleCallReject(String[] parts) {
