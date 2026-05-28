@@ -7,22 +7,27 @@ import java.util.concurrent.*;
 
 public class VoiceChatServer {
     private static final int PORT = 7777;
-    private static final long CLIENT_TIMEOUT_MS = 120_000; // 2 минуты таймаут
+    private static final long CLIENT_TIMEOUT_MS = 60_000;
 
     private static final ConcurrentHashMap<String, ClientInfo> clients = new ConcurrentHashMap<>();
     private volatile boolean running = false;
     private ServerSocket serverSocket;
 
     private static class ClientInfo {
-        final String nickname, publicIp;
-        final int tcpPort, udpPort;
+        final String nickname;
+        final String publicIp;
+        final int tcpPort;
+        final int udpPort;
         volatile long lastActivity;
 
         ClientInfo(String nick, String ip, int tcp, int udp) {
-            this.nickname = nick; this.publicIp = ip;
-            this.tcpPort = tcp; this.udpPort = udp;
+            this.nickname = nick;
+            this.publicIp = ip;
+            this.tcpPort = tcp;
+            this.udpPort = udp;
             this.lastActivity = System.currentTimeMillis();
         }
+
         void ping() { lastActivity = System.currentTimeMillis(); }
         boolean isAlive() { return System.currentTimeMillis() - lastActivity < CLIENT_TIMEOUT_MS; }
     }
@@ -31,25 +36,32 @@ public class VoiceChatServer {
 
     public void start() {
         running = true;
-        System.out.println("🚀 VoiceChat Server: порт " + PORT);
+        System.out.println("VoiceChat Server запущен на порту " + PORT);
+        System.out.println("   Публичный IP: " + getPublicIpHint());
+        System.out.println("   Откройте порт " + PORT + " (TCP) в фаерволе!");
 
         ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor();
         cleaner.scheduleAtFixedRate(() -> {
             clients.entrySet().removeIf(e -> !e.getValue().isAlive());
-            System.out.println("🧹 Онлайн: " + clients.size());
+            System.out.println("Очистка: онлайн " + clients.size() + " клиентов");
         }, 30, 30, TimeUnit.SECONDS);
 
         try {
             serverSocket = new ServerSocket(PORT);
-            System.out.println("✅ Готов к подключениям");
+            System.out.println("Сервер готов к подключениям");
+
             while (running) {
                 Socket client = serverSocket.accept();
-                final String clientAddr = client.getInetAddress().getHostAddress();
-                System.out.println("🔌 Подключение: " + clientAddr);
-                new Thread(() -> handleClient(client, clientAddr), "Handler").start();
+                String clientAddr = client.getInetAddress().getHostAddress();
+                System.out.println("Подключение от: " + clientAddr);
+                new Thread(() -> handleClient(client, clientAddr), "ClientHandler").start();
             }
-        } catch (IOException e) { if (running) System.err.println(" Ошибка: " + e.getMessage()); }
-        finally { cleaner.shutdown(); stop(); }
+        } catch (IOException e) {
+            if (running) System.err.println("Ошибка сервера: " + e.getMessage());
+        } finally {
+            cleaner.shutdown();
+            stop();
+        }
     }
 
     private void handleClient(Socket client, String clientPublicIp) {
@@ -58,11 +70,11 @@ public class VoiceChatServer {
 
             String line;
             while ((line = in.readLine()) != null) {
-                final String[] parts = line.split("\\|", 4);
+                String[] parts = line.split("\\|", 4);
                 if (parts.length < 1) continue;
 
-                final String cmd = parts[0].trim().toUpperCase();
-                final ClientInfo info = clients.get(parts.length > 1 ? parts[1] : "");
+                String cmd = parts[0].trim().toUpperCase();
+                ClientInfo info = clients.get(parts.length > 1 ? parts[1] : "");
 
                 switch (cmd) {
                     case "REGISTER" -> handleRegister(out, parts, clientPublicIp);
@@ -70,66 +82,117 @@ public class VoiceChatServer {
                     case "CALL" -> handleCall(out, parts, info);
                     case "CALL_ACCEPT" -> handleCallAccept(out, parts);
                     case "PING" -> { if (info != null) info.ping(); out.println("PONG"); }
-                    case "UNREGISTER" -> clients.remove(parts[1]);
+                    case "UNREGISTER" -> handleUnregister(out, parts);
+                    default -> out.println("ERROR|Неизвестная команда");
                 }
             }
-        } catch (IOException e) { System.out.println("⚠️ Клиент отключился: " + clientPublicIp); }
-        finally {
-            clients.values().removeIf(c -> c.publicIp.equals(clientPublicIp));
+        } catch (IOException e) {
+            System.out.println("Клиент отключился: " + clientPublicIp);
+        } finally {
+            if (clients.values().removeIf(c -> c.publicIp.equals(clientPublicIp))) {
+                System.out.println("Удалён клиент: " + clientPublicIp);
+            }
             try { client.close(); } catch (IOException ignored) {}
         }
     }
 
     private void handleRegister(PrintWriter out, String[] parts, String clientPublicIp) {
-        if (parts.length < 4) { out.println("ERROR|REGISTER|Nick|TcpPort|UdpPort"); return; }
+        if (parts.length < 4) {
+            out.println("ERROR|Нужно: Nick|TcpPort|UdpPort");
+            return;
+        }
         try {
-            final String nick = parts[1].trim();
-            final int tcp = Integer.parseInt(parts[2].trim());
-            final int udp = Integer.parseInt(parts[3].trim());
+            String nick = parts[1];
+            int tcpPort = Integer.parseInt(parts[2]);
+            int udpPort = Integer.parseInt(parts[3]);
 
             if (clients.containsKey(nick) && clients.get(nick).isAlive()) {
-                out.println("ERROR|Ник занят"); return;
+                out.println("ERROR|Ник уже занят");
+                return;
             }
-            clients.put(nick, new ClientInfo(nick, clientPublicIp, tcp, udp));
-            System.out.println("✅ REGISTER: " + nick + " @ " + clientPublicIp);
-            out.println("OK|Зарегистрирован");
-        } catch (NumberFormatException e) { out.println("ERROR|Неверный порт"); }
+
+            clients.put(nick, new ClientInfo(nick, clientPublicIp, tcpPort, udpPort));
+            System.out.println("REGISTER: " + nick + " @ " + clientPublicIp + ":" + tcpPort);
+            out.println("OK|Зарегистрирован как " + nick);
+        } catch (NumberFormatException e) {
+            out.println("ERROR|Неверный формат порта");
+        }
     }
 
     private void handleLookup(PrintWriter out, String[] parts) {
-        if (parts.length < 2) { out.println("ERROR|LOOKUP|Nick"); return; }
-        final String targetNick = parts[1].trim();
-        final ClientInfo target = clients.get(targetNick);
+        if (parts.length < 2) {
+            out.println("ERROR|Нужно: Nick");
+            return;
+        }
+        String targetNick = parts[1];
+        ClientInfo target = clients.get(targetNick);
 
         if (target != null && target.isAlive()) {
             out.println("FOUND|" + target.publicIp + "|" + target.tcpPort + "|" + target.udpPort);
-            System.out.println("🔍 LOOKUP: " + targetNick + " → найден");
+            System.out.println("LOOKUP: " + targetNick + " -> найден");
         } else {
             out.println("NOT_FOUND");
-            System.out.println(" LOOKUP: " + targetNick + " → не найден");
+            System.out.println("LOOKUP: " + targetNick + " -> не найден");
         }
     }
 
     private void handleCall(PrintWriter out, String[] parts, ClientInfo caller) {
-        if (parts.length < 3 || caller == null) { out.println("ERROR|CALL|Params"); return; }
-        final String targetNick = parts[1].trim();
-        final int callerUdp = Integer.parseInt(parts[2].trim());
-        final ClientInfo target = clients.get(targetNick);
+        if (parts.length < 3 || caller == null) {
+            out.println("ERROR|Неверные параметры");
+            return;
+        }
+        String targetNick = parts[1];
+        int callerUdp = Integer.parseInt(parts[2]);
+        ClientInfo target = clients.get(targetNick);
 
-        if (target == null || !target.isAlive()) { out.println("ERROR|Оффлайн"); return; }
+        if (target == null || !target.isAlive()) {
+            out.println("ERROR|Пользователь не в сети");
+            return;
+        }
         out.println("CALL_DATA|" + target.publicIp + "|" + target.tcpPort + "|" + target.udpPort + "|" + callerUdp);
-        System.out.println("📞 CALL: " + caller.nickname + " → " + targetNick);
+        System.out.println("CALL: " + caller.nickname + " -> " + targetNick);
     }
 
     private void handleCallAccept(PrintWriter out, String[] parts) {
-        if (parts.length < 3) { out.println("ERROR|CALL_ACCEPT|Params"); return; }
-        out.println("CALL_ACCEPTED|" + parts[2].trim());
-        System.out.println("✅ CALL_ACCEPT: " + parts[1]);
+        if (parts.length < 3) {
+            out.println("ERROR|Неверные параметры");
+            return;
+        }
+        String targetNick = parts[1];
+        int targetUdp = Integer.parseInt(parts[2]);
+        out.println("CALL_ACCEPTED|" + targetUdp);
+        System.out.println("CALL_ACCEPT: " + targetNick);
+    }
+
+    private void handleUnregister(PrintWriter out, String[] parts) {
+        if (parts.length < 2) {
+            out.println("ERROR|Нужно: Nick");
+            return;
+        }
+        clients.remove(parts[1]);
+        System.out.println("UNREGISTER: " + parts[1]);
+        out.println("OK|Удалён из реестра");
+    }
+
+    private String getPublicIpHint() {
+        try {
+            URL url = new URL("https://api.ipify.org");
+            BufferedReader in = new BufferedReader(new InputStreamReader(url.openStream()));
+            String ip = in.readLine();
+            in.close();
+            if (ip != null && !ip.isEmpty()) return ip;
+        } catch (Exception ignored) {}
+        return "Не удалось определить (проверьте на 2ip.ru)";
     }
 
     public void stop() {
         running = false;
-        try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) {}
+        try {
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+        } catch (IOException ignored) {}
         clients.clear();
+        System.out.println("Сервер остановлен");
     }
 }
