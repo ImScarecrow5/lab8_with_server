@@ -18,16 +18,15 @@ public class VoiceChatServer {
         final String publicIp;
         final int tcpPort;
         final int udpPort;
+        final PrintWriter out; // ✅ Ссылка на поток клиента для уведомлений
         volatile long lastActivity;
 
-        ClientInfo(String nick, String ip, int tcp, int udp) {
-            this.nickname = nick;
-            this.publicIp = ip;
-            this.tcpPort = tcp;
-            this.udpPort = udp;
+        ClientInfo(String nick, String ip, int tcp, int udp, PrintWriter out) {
+            this.nickname = nick; this.publicIp = ip;
+            this.tcpPort = tcp; this.udpPort = udp;
+            this.out = out;
             this.lastActivity = System.currentTimeMillis();
         }
-
         void ping() { lastActivity = System.currentTimeMillis(); }
         boolean isAlive() { return System.currentTimeMillis() - lastActivity < CLIENT_TIMEOUT_MS; }
     }
@@ -49,7 +48,6 @@ public class VoiceChatServer {
         try {
             serverSocket = new ServerSocket(PORT);
             System.out.println("Сервер готов к подключениям");
-
             while (running) {
                 Socket client = serverSocket.accept();
                 String clientAddr = client.getInetAddress().getHostAddress();
@@ -82,116 +80,74 @@ public class VoiceChatServer {
                     case "CALL" -> handleCall(out, parts, info);
                     case "CALL_ACCEPT" -> handleCallAccept(out, parts);
                     case "PING" -> { if (info != null) info.ping(); out.println("PONG"); }
-                    case "UNREGISTER" -> handleUnregister(out, parts);
+                    case "UNREGISTER" -> clients.remove(parts[1]);
                     default -> out.println("ERROR|Неизвестная команда");
                 }
             }
         } catch (IOException e) {
             System.out.println("Клиент отключился: " + clientPublicIp);
         } finally {
-            if (clients.values().removeIf(c -> c.publicIp.equals(clientPublicIp))) {
-                System.out.println("Удалён клиент: " + clientPublicIp);
-            }
+            clients.values().removeIf(c -> c.publicIp.equals(clientPublicIp));
             try { client.close(); } catch (IOException ignored) {}
         }
     }
 
     private void handleRegister(PrintWriter out, String[] parts, String clientPublicIp) {
-        if (parts.length < 4) {
-            out.println("ERROR|Нужно: Nick|TcpPort|UdpPort");
-            return;
-        }
+        if (parts.length < 4) { out.println("ERROR|Нужно: Nick|TcpPort|UdpPort"); return; }
         try {
             String nick = parts[1];
             int tcpPort = Integer.parseInt(parts[2]);
             int udpPort = Integer.parseInt(parts[3]);
-
             if (clients.containsKey(nick) && clients.get(nick).isAlive()) {
-                out.println("ERROR|Ник уже занят");
-                return;
+                out.println("ERROR|Ник уже занят"); return;
             }
-
-            clients.put(nick, new ClientInfo(nick, clientPublicIp, tcpPort, udpPort));
-            System.out.println("REGISTER: " + nick + " @ " + clientPublicIp + ":" + tcpPort);
+            clients.put(nick, new ClientInfo(nick, clientPublicIp, tcpPort, udpPort, out));
+            System.out.println("REGISTER: " + nick + " @ " + clientPublicIp);
             out.println("OK|Зарегистрирован как " + nick);
-        } catch (NumberFormatException e) {
-            out.println("ERROR|Неверный формат порта");
-        }
+        } catch (NumberFormatException e) { out.println("ERROR|Неверный формат порта"); }
     }
 
     private void handleLookup(PrintWriter out, String[] parts) {
-        if (parts.length < 2) {
-            out.println("ERROR|Нужно: Nick");
-            return;
-        }
+        if (parts.length < 2) { out.println("ERROR|Нужно: Nick"); return; }
         String targetNick = parts[1];
         ClientInfo target = clients.get(targetNick);
-
         if (target != null && target.isAlive()) {
             out.println("FOUND|" + target.publicIp + "|" + target.tcpPort + "|" + target.udpPort);
             System.out.println("LOOKUP: " + targetNick + " -> найден");
-        } else {
-            out.println("NOT_FOUND");
-            System.out.println("LOOKUP: " + targetNick + " -> не найден");
-        }
+        } else { out.println("NOT_FOUND"); }
     }
 
     private void handleCall(PrintWriter out, String[] parts, ClientInfo caller) {
-        if (parts.length < 3 || caller == null) {
-            out.println("ERROR|Неверные параметры");
-            return;
-        }
+        if (parts.length < 3 || caller == null) { out.println("ERROR|Неверные параметры"); return; }
         String targetNick = parts[1];
         int callerUdp = Integer.parseInt(parts[2]);
         ClientInfo target = clients.get(targetNick);
 
         if (target == null || !target.isAlive()) {
-            out.println("ERROR|Пользователь не в сети");
-            return;
+            out.println("ERROR|Пользователь не в сети"); return;
         }
+        target.out.println("INCOMING_CALL|" + caller.nickname + "|" + callerUdp);
         out.println("CALL_DATA|" + target.publicIp + "|" + target.tcpPort + "|" + target.udpPort + "|" + callerUdp);
         System.out.println("CALL: " + caller.nickname + " -> " + targetNick);
     }
 
     private void handleCallAccept(PrintWriter out, String[] parts) {
-        if (parts.length < 3) {
-            out.println("ERROR|Неверные параметры");
-            return;
-        }
-        String targetNick = parts[1];
-        int targetUdp = Integer.parseInt(parts[2]);
-        out.println("CALL_ACCEPTED|" + targetUdp);
-        System.out.println("CALL_ACCEPT: " + targetNick);
-    }
-
-    private void handleUnregister(PrintWriter out, String[] parts) {
-        if (parts.length < 2) {
-            out.println("ERROR|Нужно: Nick");
-            return;
-        }
-        clients.remove(parts[1]);
-        System.out.println("UNREGISTER: " + parts[1]);
-        out.println("OK|Удалён из реестра");
+        if (parts.length < 3) { out.println("ERROR|Неверные параметры"); return; }
+        out.println("CALL_ACCEPTED|" + parts[2]);
     }
 
     private String getPublicIpHint() {
         try {
             URL url = new URL("https://api.ipify.org");
             BufferedReader in = new BufferedReader(new InputStreamReader(url.openStream()));
-            String ip = in.readLine();
-            in.close();
-            if (ip != null && !ip.isEmpty()) return ip;
-        } catch (Exception ignored) {}
-        return "Не удалось определить (проверьте на 2ip.ru)";
+            String ip = in.readLine(); in.close();
+            return ip != null && !ip.isEmpty() ? ip : "Не удалось определить";
+        } catch (Exception ignored) { return "Не удалось определить"; }
     }
 
     public void stop() {
         running = false;
-        try {
-            if (serverSocket != null && !serverSocket.isClosed()) {
-                serverSocket.close();
-            }
-        } catch (IOException ignored) {}
+        try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) {}
         clients.clear();
         System.out.println("Сервер остановлен");
     }
