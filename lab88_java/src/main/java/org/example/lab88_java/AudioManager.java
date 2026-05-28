@@ -15,9 +15,17 @@ public class AudioManager {
     private final AtomicBoolean isTalking = new AtomicBoolean(false);
     private InetAddress remoteIp;
     private int remoteUdpPort;
+    private InetAddress serverIp;
+    private int serverUdpPort;
 
     // Флаг успешной инициализации
     private boolean initialized = false;
+
+    public void setServerTarget(InetAddress ip, int port) {
+        this.serverIp = ip;
+        this.serverUdpPort = port;
+    }
+
 
     public AudioManager(int udpPort) {
         this.udpPort = udpPort;
@@ -75,17 +83,15 @@ public class AudioManager {
                 int count = mic.read(buf, 0, buf.length);
                 if (count > 0) {
                     try {
-                        socket.send(new DatagramPacket(buf, count, remoteIp, remoteUdpPort));
+                        InetAddress targetIp = (serverIp != null) ? serverIp : remoteIp;
+                        int targetPort = (serverIp != null) ? serverUdpPort : remoteUdpPort;
+                        socket.send(new DatagramPacket(buf, count, targetIp, targetPort));
                     } catch (IOException e) {
                         break;
                     }
                 }
             } else {
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException e) {
-                    break;
-                }
+                try { Thread.sleep(10); } catch (InterruptedException e) { break; }
             }
         }
     }

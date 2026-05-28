@@ -36,13 +36,14 @@ public class TCPSignaling {
                 activeSocket.close();
             }
             activeSocket = new Socket();
-            activeSocket.connect(new InetSocketAddress(ip, port), 5000);
-            activeSocket.setSoTimeout(10000);
+            activeSocket.connect(new InetSocketAddress(ip, port), 15000);
+            activeSocket.setSoTimeout(15000);
             out = new PrintWriter(activeSocket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(activeSocket.getInputStream()));
             new Thread(this::readLoop).start();
             return true;
         } catch (IOException e) {
+            System.err.println("TCP connect to " + ip + ":" + port + " failed: " + e);
             return false;
         }
     }
