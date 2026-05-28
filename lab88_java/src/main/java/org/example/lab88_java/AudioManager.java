@@ -15,17 +15,10 @@ public class AudioManager {
     private final AtomicBoolean isTalking = new AtomicBoolean(false);
     private InetAddress remoteIp;
     private int remoteUdpPort;
-    private InetAddress serverIp;
-    private int serverUdpPort;
-
-    // Флаг успешной инициализации
     private boolean initialized = false;
 
-    public void setServerTarget(InetAddress ip, int port) {
-        this.serverIp = ip;
-        this.serverUdpPort = port;
-    }
-
+    private InetAddress serverIp;
+    private int serverPort;
 
     public AudioManager(int udpPort) {
         this.udpPort = udpPort;
@@ -34,6 +27,7 @@ public class AudioManager {
             this.mic = AudioSystem.getTargetDataLine(FORMAT);
             this.speaker = AudioSystem.getSourceDataLine(FORMAT);
             this.initialized = true;
+            System.out.println("AudioManager инициализирован на порту " + udpPort);
         } catch (LineUnavailableException e) {
             System.err.println("❌ Аудиоустройство недоступно: " + e.getMessage());
         } catch (SocketException e) {
@@ -41,8 +35,20 @@ public class AudioManager {
         }
     }
 
-    public boolean isInitialized() {
-        return initialized;
+    public boolean isInitialized() { return initialized; }
+    public int getUdpPort() { return udpPort; }
+
+    public void setServerTarget(InetAddress ip, int port) {
+        this.serverIp = ip;
+        this.serverPort = port;
+        System.out.println("AudioManager настроен на сервер " + ip + ":" + port);
+    }
+
+    public void sendDummyPacket(InetAddress targetIp, int targetPort) throws IOException {
+        byte[] dummy = new byte[0];
+        DatagramPacket p = new DatagramPacket(dummy, 0, targetIp, targetPort);
+        socket.send(p);
+        System.out.println("Дамми-пакет отправлен на " + targetIp + ":" + targetPort);
     }
 
     public void startRelay() throws LineUnavailableException {
@@ -65,10 +71,8 @@ public class AudioManager {
     }
 
     public void startCall(InetAddress remoteIp, int remoteUdp) throws LineUnavailableException {
-        if (!initialized) {
-            System.err.println("❌ AudioManager не инициализирован");
-            return;
-        }
+        if (!initialized) return;
+        if (running) stopCall();
         this.remoteIp = remoteIp;
         this.remoteUdpPort = remoteUdp;
         this.running = true;
@@ -78,6 +82,7 @@ public class AudioManager {
         speaker.start();
         new Thread(this::captureAndSend).start();
         new Thread(this::receiveAndPlay).start();
+        System.out.println("Direct call started to " + remoteIp + ":" + remoteUdp);
     }
 
     public void stopCall() {
@@ -93,6 +98,7 @@ public class AudioManager {
         if (socket != null && !socket.isClosed()) {
             socket.close();
         }
+        System.out.println("Audio call stopped");
     }
 
     private void captureAndSend() {
@@ -104,11 +110,18 @@ public class AudioManager {
                 int count = mic.read(buf, 0, buf.length);
                 if (count > 0) {
                     try {
-                        InetAddress targetIp = (serverIp != null) ? serverIp : remoteIp;
-                        int targetPort = (serverIp != null) ? serverUdpPort : remoteUdpPort;
+                        InetAddress targetIp;
+                        int targetPort;
+                        if (serverIp != null) {
+                            targetIp = serverIp;
+                            targetPort = serverPort;
+                        } else {
+                            targetIp = remoteIp;
+                            targetPort = remoteUdpPort;
+                        }
                         socket.send(new DatagramPacket(buf, count, targetIp, targetPort));
                         totalSent += count;
-                        if (System.currentTimeMillis() - lastLog > 1000) {
+                        if (System.currentTimeMillis() - lastLog > 2000) {
                             System.out.println("Отправлено байт за сек: " + totalSent);
                             totalSent = 0;
                             lastLog = System.currentTimeMillis();
@@ -126,12 +139,21 @@ public class AudioManager {
 
     private void receiveAndPlay() {
         byte[] buf = new byte[1024];
+        long lastLog = System.currentTimeMillis();
+        int totalReceived = 0;
         while (running) {
             try {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
                 socket.receive(p);
                 speaker.write(p.getData(), 0, p.getLength());
+                totalReceived += p.getLength();
+                if (System.currentTimeMillis() - lastLog > 2000) {
+                    System.out.println("Получено байт за сек: " + totalReceived);
+                    totalReceived = 0;
+                    lastLog = System.currentTimeMillis();
+                }
             } catch (IOException e) {
+                if (running) System.err.println("Ошибка приёма: " + e);
                 break;
             }
         }
@@ -139,9 +161,5 @@ public class AudioManager {
 
     public void setTalking(boolean t) {
         isTalking.set(t);
-    }
-
-    public int getUdpPort() {
-        return udpPort;
     }
 }
