@@ -87,13 +87,13 @@ public class VoiceChatServer {
                 }
                 String targetNick = activeCalls.get(sender.nickname);
                 ClientInfo target = (targetNick != null) ? clients.get(targetNick) : null;
-                if (target != null && target.udpEndpoint != null) {
+                if (target != null && target != sender && target.udpEndpoint != null) {
                     DatagramPacket forward = new DatagramPacket(packet.getData(), packet.getLength(),
                             target.udpEndpoint.getAddress(), target.udpEndpoint.getPort());
                     udpRelaySocket.send(forward);
                     System.out.println("Relay " + sender.nickname + " -> " + targetNick + ", bytes=" + packet.getLength());
                 } else {
-                    System.out.println("Нет цели для " + sender.nickname + " (activeCalls=" + activeCalls + ")");
+                    System.out.println("Попытка отправить самому себе, игнорируем");
                 }
             } catch (IOException e) { if (running) e.printStackTrace(); }
         }
@@ -223,13 +223,18 @@ public class VoiceChatServer {
     }
 
     private void handleSetUdpEndpoint(String[] parts, InetAddress clientAddr, int clientPort) {
-        if (parts.length < 3) return;
+        if (parts.length < 3) {
+            System.out.println("SET_UDP_ENDPOINT: недостаточно параметров");
+            return;
+        }
         String nick = parts[1];
         int udpPort = Integer.parseInt(parts[2]);
         ClientInfo ci = clients.get(nick);
         if (ci != null) {
             ci.udpEndpoint = new InetSocketAddress(clientAddr, udpPort);
             System.out.println("UDP endpoint для " + nick + " = " + ci.udpEndpoint);
+        } else {
+            System.out.println("SET_UDP_ENDPOINT: клиент " + nick + " не найден");
         }
     }
 

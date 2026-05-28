@@ -137,6 +137,8 @@ public class P2PController {
 
                 // 5. Отправляем дамми-пакет через тот же сокет AudioManager, чтобы сервер запомнил реальный порт
                 serverOut.println("SET_UDP_ENDPOINT|" + finalNick + "|" + udp);
+                serverOut.flush();
+                System.out.println("SET_UDP_ENDPOINT отправлен: " + finalNick + " порт " + udp);
                 log("UDP endpoint отправлен на сервер через AudioManager");
 
                 // 6. Запускаем TCP сигналинг (для LAN режима, не критично)
