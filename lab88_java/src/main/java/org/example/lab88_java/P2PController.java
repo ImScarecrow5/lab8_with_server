@@ -197,25 +197,34 @@ public class P2PController {
     }
 
     private void startRelayCall() {
-        if (audio != null && !isCallActive) {
-            try {
-                audio.startRelay();    // запускаем аудио
-                isCallActive = true;
-                Platform.runLater(() -> {
-                    btnCall.setDisable(true);
-                    btnEnd.setDisable(false);
-                    btnPushToTalk.setDisable(false);
-                    updateStatus("💬 Разговор идёт через сервер");
-                });
-            } catch (Exception e) {
-                log("Ошибка аудио: " + e.getMessage());
-            }
+        if (audio == null) {
+            log("AudioManager не инициализирован");
+            return;
+        }
+        if (isCallActive) {
+            log("Вызов уже активен");
+            return;
+        }
+        try {
+            audio.startRelay(); // запускаем аудиопоток через сервер
+            isCallActive = true;
+            Platform.runLater(() -> {
+                btnCall.setDisable(true);
+                btnEnd.setDisable(false);
+                btnPushToTalk.setDisable(false);
+                updateStatus("💬 Разговор идёт через сервер");
+            });
+            log("Аудиоретрансляция запущена");
+        } catch (Exception e) {
+            log("Ошибка запуска аудио: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     private void handleIncomingCall(String msg) {
+        System.out.println("handleIncomingCall received: " + msg); // отладка
         String[] parts = msg.split("\\|");
-        // Формат: INCOMING_CALL|ник_звонящего|IP_звонящего|TCP_порт_звонящего|UDP_порт_звонящего
+        // Формат: INCOMING_CALL|callerNick|callerIp|callerTcp|callerUdp
         if (parts.length >= 5) {
             String callerNick = parts[1];
             String callerIp = parts[2];
@@ -229,20 +238,29 @@ public class P2PController {
                 alert.setContentText("Звонит: " + callerNick + "\nIP: " + callerIp + "\nПринять вызов?");
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
-                        // Отправляем подтверждение серверу: CALL_ACCEPT|мойНик|ник_звонящего
-                        serverOut.println("CALL_ACCEPT|" + txtNick.getText() + "|" + callerNick);
-                        // Запускаем аудиопоток через сервер (ретранслятор)
+                        // Отправляем подтверждение серверу
+                        if (serverOut != null) {
+                            serverOut.println("CALL_ACCEPT|" + txtNick.getText() + "|" + callerNick);
+                            serverOut.flush();
+                            System.out.println("Sent CALL_ACCEPT to server");
+                        } else {
+                            System.err.println("serverOut is null!");
+                        }
+                        // Запускаем разговор на этом клиенте
                         startRelayCall();
                         updateStatus("Вызов принят. Разговор через сервер.");
                         log("✅ Принят звонок от " + callerNick);
                     } else {
-                        serverOut.println("CALL_REJECT|" + callerNick);
+                        if (serverOut != null) {
+                            serverOut.println("CALL_REJECT|" + callerNick);
+                            serverOut.flush();
+                        }
                         updateStatus("Звонок отклонён");
                     }
                 });
             });
         } else {
-            log("Некорректное сообщение INCOMING_CALL: " + msg);
+            System.err.println("Invalid INCOMING_CALL format: " + msg);
         }
     }
 

@@ -46,8 +46,14 @@ public class AudioManager {
     }
 
     public void startRelay() throws LineUnavailableException {
-        if (!initialized) return;
-        if (running) return;
+        if (!initialized) {
+            System.err.println("AudioManager не инициализирован");
+            return;
+        }
+        if (running) {
+            System.out.println("AudioManager уже работает");
+            return;
+        }
         running = true;
         mic.open(FORMAT);
         mic.start();
@@ -55,6 +61,7 @@ public class AudioManager {
         speaker.start();
         new Thread(this::captureAndSend).start();
         new Thread(this::receiveAndPlay).start();
+        System.out.println("Audio relay started");
     }
 
     public void startCall(InetAddress remoteIp, int remoteUdp) throws LineUnavailableException {
