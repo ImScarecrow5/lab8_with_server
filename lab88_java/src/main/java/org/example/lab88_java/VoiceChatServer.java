@@ -223,11 +223,12 @@ public class VoiceChatServer {
     }
 
     private void handleSetUdpEndpoint(String[] parts, InetAddress clientAddr, int clientPort) {
-        if (parts.length < 2) return;
+        if (parts.length < 3) return;
         String nick = parts[1];
+        int udpPort = Integer.parseInt(parts[2]);
         ClientInfo ci = clients.get(nick);
         if (ci != null) {
-            ci.udpEndpoint = new InetSocketAddress(clientAddr, clientPort);
+            ci.udpEndpoint = new InetSocketAddress(clientAddr, udpPort);
             System.out.println("UDP endpoint для " + nick + " = " + ci.udpEndpoint);
         }
     }
