@@ -18,7 +18,7 @@ public class VoiceChatServer {
         final String publicIp;
         final int tcpPort;
         final int udpPort;
-        final PrintWriter out; // ✅ Ссылка на поток клиента для уведомлений
+        final PrintWriter out; // Поток для отправки уведомлений клиенту
         volatile long lastActivity;
 
         ClientInfo(String nick, String ip, int tcp, int udp, PrintWriter out) {
