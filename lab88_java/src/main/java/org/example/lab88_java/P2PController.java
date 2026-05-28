@@ -198,32 +198,42 @@ public class P2PController {
 
     private void startRelayCall() {
         if (audio != null && !isCallActive) {
-            isCallActive = true;
-            Platform.runLater(() -> {
-                btnCall.setDisable(true);
-                btnEnd.setDisable(false);
-                btnPushToTalk.setDisable(false);
-                updateStatus("💬 Разговор идёт через сервер");
-                log("Аудио ретранслируется через сервер");
-            });
-            // Аудиопоток уже настроен на отправку на сервер в методе connectToServer,
-            // и сервер сам ретранслирует пакеты собеседнику.
+            try {
+                audio.startRelay();    // запускаем аудио
+                isCallActive = true;
+                Platform.runLater(() -> {
+                    btnCall.setDisable(true);
+                    btnEnd.setDisable(false);
+                    btnPushToTalk.setDisable(false);
+                    updateStatus("💬 Разговор идёт через сервер");
+                });
+            } catch (Exception e) {
+                log("Ошибка аудио: " + e.getMessage());
+            }
         }
     }
 
     private void handleIncomingCall(String msg) {
-        String[] p = msg.split("\\|");
-        if (p.length >= 5) {
-            String callerNick = p[1];
+        String[] parts = msg.split("\\|");
+        // Формат: INCOMING_CALL|ник_звонящего|IP_звонящего|TCP_порт_звонящего|UDP_порт_звонящего
+        if (parts.length >= 5) {
+            String callerNick = parts[1];
+            String callerIp = parts[2];
+            int callerTcpPort = Integer.parseInt(parts[3]);
+            int callerUdpPort = Integer.parseInt(parts[4]);
+
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.setTitle("Входящий звонок");
-                alert.setContentText("Звонит: " + callerNick + "\nПринять вызов?");
+                alert.setHeaderText(null);
+                alert.setContentText("Звонит: " + callerNick + "\nIP: " + callerIp + "\nПринять вызов?");
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
+                        // Отправляем подтверждение серверу: CALL_ACCEPT|мойНик|ник_звонящего
                         serverOut.println("CALL_ACCEPT|" + txtNick.getText() + "|" + callerNick);
+                        // Запускаем аудиопоток через сервер (ретранслятор)
+                        startRelayCall();
                         updateStatus("Вызов принят. Разговор через сервер.");
-                        startRelayCall();  // <-- ЭТО ВАЖНО
                         log("✅ Принят звонок от " + callerNick);
                     } else {
                         serverOut.println("CALL_REJECT|" + callerNick);
@@ -231,6 +241,8 @@ public class P2PController {
                     }
                 });
             });
+        } else {
+            log("Некорректное сообщение INCOMING_CALL: " + msg);
         }
     }
 
