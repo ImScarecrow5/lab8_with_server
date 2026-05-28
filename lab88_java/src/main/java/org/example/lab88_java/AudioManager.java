@@ -16,14 +16,32 @@ public class AudioManager {
     private InetAddress remoteIp;
     private int remoteUdpPort;
 
-    public AudioManager(int udpPort) throws LineUnavailableException, SocketException {
+    // Флаг успешной инициализации
+    private boolean initialized = false;
+
+    public AudioManager(int udpPort) {
         this.udpPort = udpPort;
-        this.socket = new DatagramSocket(udpPort);
-        this.mic = AudioSystem.getTargetDataLine(FORMAT);
-        this.speaker = AudioSystem.getSourceDataLine(FORMAT);
+        try {
+            this.socket = new DatagramSocket(udpPort);
+            this.mic = AudioSystem.getTargetDataLine(FORMAT);
+            this.speaker = AudioSystem.getSourceDataLine(FORMAT);
+            this.initialized = true;
+        } catch (LineUnavailableException e) {
+            System.err.println("❌ Аудиоустройство недоступно: " + e.getMessage());
+        } catch (SocketException e) {
+            System.err.println("❌ Ошибка сокета: " + e.getMessage());
+        }
+    }
+
+    public boolean isInitialized() {
+        return initialized;
     }
 
     public void startCall(InetAddress remoteIp, int remoteUdp) throws LineUnavailableException {
+        if (!initialized) {
+            System.err.println("❌ AudioManager не инициализирован");
+            return;
+        }
         this.remoteIp = remoteIp;
         this.remoteUdpPort = remoteUdp;
         this.running = true;
@@ -37,8 +55,17 @@ public class AudioManager {
 
     public void stopCall() {
         this.running = false;
-        if (mic.isOpen()) { mic.stop(); mic.close(); }
-        if (speaker.isOpen()) { speaker.stop(); speaker.close(); }
+        if (mic != null && mic.isOpen()) {
+            mic.stop();
+            mic.close();
+        }
+        if (speaker != null && speaker.isOpen()) {
+            speaker.stop();
+            speaker.close();
+        }
+        if (socket != null && !socket.isClosed()) {
+            socket.close();
+        }
     }
 
     private void captureAndSend() {

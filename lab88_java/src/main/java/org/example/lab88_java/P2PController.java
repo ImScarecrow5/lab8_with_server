@@ -6,65 +6,51 @@ import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.net.InetAddress;
-import java.net.Socket;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class P2PController {
-    @FXML private TextField txtNick;
-    @FXML private TextField txtTcp;
-    @FXML private TextField txtUdp;
-    @FXML private TextField txtStatus;
-    @FXML private ListView<String> listPeers;
-    @FXML private Button btnStart;
-    @FXML private Button btnCall;
-    @FXML private Button btnEnd;
-    @FXML private Button btnPushToTalk;
-    @FXML private ComboBox<String> connectionMode;
-    @FXML private TextField serverIpField;
-    @FXML private TextField serverPortField;
-    @FXML private TextField searchNickField;
-    @FXML private Button btnSearch;
 
-    private ObservableList<String> peerList = FXCollections.observableArrayList();
+    // FXML привязки
+    @FXML private TextField txtNick, txtTcp, txtUdp, txtStatus;
+    @FXML private TextField txtTargetIp, txtTargetPort;
+    @FXML private ComboBox<String> cmbMode;
+    @FXML private ListView<String> listPeers;
+    @FXML private Button btnStart, btnStop, btnCall, btnEnd, btnPushToTalk;
+
+    // Логика
+    private final ObservableList<String> peerList = FXCollections.observableArrayList();
     private MulticastDiscovery discovery;
     private TCPSignaling signaling;
     private AudioManager audio;
     private PeerInfo selectedPeer;
     private volatile boolean isCallActive = false;
     private ScheduledExecutorService scheduler;
-    private Socket serverSocket;
-    private PrintWriter serverOut;
-    private BufferedReader serverIn;
-
-    // Режим подключения
-    private enum Mode { LAN, SERVER }
-    private Mode currentMode = Mode.LAN;
+    private String currentMode = "LAN (Multicast)";
 
     @FXML
     public void initialize() {
         listPeers.setItems(peerList);
 
-        // Настройка ComboBox режимов
-        connectionMode.getItems().addAll("LAN (одна сеть)", "Сервер (интернет)");
-        connectionMode.setValue("LAN (одна сеть)");
-        connectionMode.getSelectionModel().selectedItemProperty()
-                .addListener((obs, oldVal, newVal) -> {
-                    currentMode = "LAN (одна сеть)".equals(newVal) ? Mode.LAN : Mode.SERVER;
-                    updateStatus("Режим: " + newVal);
-                });
+        // Инициализация ComboBox режимов
+        cmbMode.getItems().addAll("LAN (Multicast)", "Прямое IP");
+        cmbMode.setValue("LAN (Multicast)");
 
-        // Настройка полей сервера
-        btnSearch.setDisable(true);
-        serverIpField.setText("92.241.27.52"); // или ваш IP сервера
-        serverPortField.setText("7777");;
+        // Обработка смены режима
+        cmbMode.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
+            currentMode = newVal;
+            boolean isLan = "LAN (Multicast)".equals(currentMode);
 
+            txtTargetIp.setDisable(isLan);
+            txtTargetPort.setDisable(isLan);
+            btnCall.setDisable(isLan); // В LAN режиме кнопка активна только при выборе пира
+            updateStatus("Режим: " + currentMode);
+        });
+
+        // Выбор пира из списка (для LAN)
         listPeers.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null && discovery != null) {
                 String nickname = newVal.split(" \\(")[0];
@@ -72,170 +58,105 @@ public class P2PController {
                 btnCall.setDisable(selectedPeer == null);
             }
         });
+
+        // Начальное состояние UI
+        btnStop.setDisable(true);
+        btnCall.setDisable(true);
+        btnEnd.setDisable(true);
+        btnPushToTalk.setDisable(true);
+        txtTargetIp.setDisable(true);
+        txtTargetPort.setDisable(true);
+        updateStatus("Готов к запуску");
     }
 
     @FXML
     private void handleStart() {
         try {
-            int tcp = Integer.parseInt(txtTcp.getText());
-            int udp = Integer.parseInt(txtUdp.getText());
-            String nick = txtNick.getText();
+            int tcp = Integer.parseInt(txtTcp.getText().trim());
+            int udp = Integer.parseInt(txtUdp.getText().trim());
+            String nick = txtNick.getText().trim();
+            if (nick.isEmpty()) nick = "User";
 
-            String mode = connectionMode.getValue();
+            // Запуск локального сервера сигнализации и аудио
+            signaling = new TCPSignaling(tcp, this::onSignal);
+            signaling.startServer();
+            audio = new AudioManager(udp);
 
-            if ("Сервер (интернет)".equals(mode)) {
-                // Подключаемся к серверу для регистрации
-                connectToServer(nick, tcp, udp);
-            } else {
-                // LAN режим
+            if ("LAN (Multicast)".equals(currentMode)) {
                 discovery = new MulticastDiscovery(nick, tcp);
                 discovery.start();
-                signaling = new TCPSignaling(tcp, this::onSignal);
-                signaling.startServer();
+                startPeerListUpdater();
+            } else {
+                updateStatus("Прямое подключение. Введите IP и порт цели.");
+                btnCall.setDisable(false);
             }
 
-            audio = new AudioManager(udp);
+            // Обновление UI
             btnStart.setDisable(true);
-            updateStatus("Узел запущен. Режим: " + mode);
-            startPeerListUpdater();
+            btnStop.setDisable(false);
+            cmbMode.setDisable(true);
+            log("Запущен. Ник: " + nick + " | Режим: " + currentMode);
 
         } catch (Exception e) {
-            showAlert("Ошибка", "Не удалось запустить узел: " + e.getMessage());
+            showAlert("Ошибка", "Не удалось запустить: " + e.getMessage());
         }
     }
 
-    private void connectToServer(String nick, int tcp, int udp) {
-        new Thread(() -> {
-            try {
-                String serverIp = serverIpField.getText();
-                int serverPort = Integer.parseInt(serverPortField.getText());
+    @FXML
+    private void handleStop() {
+        if (signaling != null) signaling.send("CALL_END");
+        if (audio != null) audio.stopCall();
+        if (discovery != null) discovery.stop();
+        if (signaling != null) signaling.stop();
+        if (scheduler != null) scheduler.shutdownNow();
 
-                serverSocket = new Socket(serverIp, serverPort);
-                serverOut = new PrintWriter(serverSocket.getOutputStream(), true);
-                serverIn = new BufferedReader(new InputStreamReader(serverSocket.getInputStream()));
-
-                // REGISTER|Nick|TcpPort|UdpPort
-                serverOut.println("REGISTER|" + nick + "|" + tcp + "|" + udp);
-
-                // Читаем ответ
-                String response = serverIn.readLine();
-                Platform.runLater(() -> {
-                    if (response != null && response.startsWith("OK")) {
-                        updateStatus("Зарегистрирован на сервере");
-                        btnSearch.setDisable(false);
-                    } else {
-                        updateStatus("Ошибка регистрации: " + response);
-                    }
-                });
-
-                // Читаем ответы от сервера (FOUND, CALL_DATA и т.д.)
-                String line;
-                while ((line = serverIn.readLine()) != null) {
-                    handleServerResponse(line);
-                }
-
-            } catch (Exception e) {
-                Platform.runLater(() -> updateStatus("Ошибка сервера: " + e.getMessage()));
-            }
-        }).start();
-    }
-
-    private void handleServerResponse(String msg) {
-        Platform.runLater(() -> {
-            if (msg.startsWith("FOUND|")) {
-                // FOUND|IP|TcpPort|UdpPort
-                String[] parts = msg.substring(6).split("\\|");
-                if (parts.length >= 3) {
-                    String ip = parts[0];
-                    int tcp = Integer.parseInt(parts[1]);
-                    int udp = Integer.parseInt(parts[2]);
-
-                    updateStatus("Найден: " + searchNickField.getText() + " @ " + ip);
-
-                    // Сохраняем найденного пира
-                    selectedPeer = new PeerInfo(searchNickField.getText(), ip, tcp, udp);
-                    btnCall.setDisable(false);
-
-                    showAlert("Поиск", "Найден: " + searchNickField.getText() +
-                            "\nIP: " + ip + "\nTCP: " + tcp + "\nUDP: " + udp);
-                }
-            } else if (msg.startsWith("CALL_DATA|")) {
-                // Обработка данных для звонка
-                handleCallData(msg);
-            } else if (msg.equals("NOT_FOUND")) {
-                updateStatus("Пользователь не найден");
-                showAlert("Поиск", "Пользователь не найден или не в сети");
-            } else if (msg.equals("PONG")) {
-                // Keep-alive ответ
-            }
-        });
-    }
-
-    private void handleCallData(String msg) {
-        // CALL_DATA|IP|TcpPort|UdpPort|CallerUdp
-        String[] parts = msg.substring(10).split("\\|");
-        if (parts.length >= 4) {
-            String ip = parts[0];
-            int tcp = Integer.parseInt(parts[1]);
-            int udp = Integer.parseInt(parts[2]);
-            int callerUdp = Integer.parseInt(parts[3]);
-
-            // Подключаемся к инициатору звонка
-            boolean connected = signaling.connect(ip, tcp);
-            if (connected) {
-                signaling.send("CALL_ACCEPTED|" + audio.getUdpPort());
-                startAudioStream(ip, callerUdp);
-            }
-        }
-    }
-
-    private void registerWithServer(String nick, int tcp, int udp) {
-        new Thread(() -> {
-            try {
-                String serverIp = serverIpField.getText();
-                int serverPort = Integer.parseInt(serverPortField.getText());
-
-                Socket sock = new Socket(serverIp, serverPort);
-                PrintWriter out = new PrintWriter(sock.getOutputStream(), true);
-
-                // REGISTER|Nick|TcpPort|UdpPort
-                out.println("REGISTER|" + nick + "|" + tcp + "|" + udp);
-
-                // Читаем ответ
-                BufferedReader in = new BufferedReader(
-                        new InputStreamReader(sock.getInputStream()));
-                String response = in.readLine();
-
-                Platform.runLater(() -> {
-                    if (response != null && response.startsWith("OK")) {
-                        updateStatus("Зарегистрирован на сервере");
-                    }
-                });
-
-                // Держим соединение для PING
-                while (!Thread.currentThread().isInterrupted()) {
-                    out.println("PING|" + nick);
-                    in.readLine(); // PONG
-                    Thread.sleep(30000);
-                }
-
-                sock.close();
-            } catch (Exception e) {
-                Platform.runLater(() -> updateStatus("Ошибка сервера: " + e.getMessage()));
-            }
-        }).start();
+        isCallActive = false;
+        btnStart.setDisable(false);
+        btnStop.setDisable(true);
+        btnCall.setDisable(true);
+        btnEnd.setDisable(true);
+        btnPushToTalk.setDisable(true);
+        cmbMode.setDisable(false);
+        peerList.clear();
+        selectedPeer = null;
+        updateStatus("Остановлено");
+        log("Узел остановлен");
     }
 
     @FXML
     private void handleCall() {
-        if (selectedPeer == null) return;
+        String targetIp;
+        int targetTcp;
 
-        boolean connected = signaling.connect(selectedPeer.ip, selectedPeer.tcpPort);
+        if ("LAN (Multicast)".equals(currentMode)) {
+            if (selectedPeer == null) {
+                showAlert("Ошибка", "Выберите собеседника из списка");
+                return;
+            }
+            targetIp = selectedPeer.ip;
+            targetTcp = selectedPeer.tcpPort;
+        } else {
+            // Режим прямого подключения
+            targetIp = txtTargetIp.getText().trim();
+            String portStr = txtTargetPort.getText().trim();
+            if (targetIp.isEmpty() || portStr.isEmpty()) {
+                showAlert("Ошибка", "Введите IP и порт собеседника");
+                return;
+            }
+            try {
+                targetTcp = Integer.parseInt(portStr);
+            } catch (NumberFormatException e) {
+                showAlert("Ошибка", "Неверный формат порта");
+                return;
+            }
+        }
+
+        boolean connected = signaling.connect(targetIp, targetTcp);
         if (connected) {
-            signaling.send("CALL_START|" + audio.getUdpPort());
-            updateStatus("Вызов инициирован");
+            signaling.send("CALL_START|" + (audio != null ? audio.getUdpPort() : 0));
+            updateStatus("Вызов инициирован...");
+            log("Исходящий вызов -> " + targetIp + ":" + targetTcp);
 
-            // Таймаут ожидания ответа
             new Thread(() -> {
                 try {
                     Thread.sleep(5000);
@@ -245,7 +166,9 @@ public class P2PController {
                             btnCall.setDisable(false);
                         });
                     }
-                } catch (InterruptedException e) {}
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }).start();
         } else {
             updateStatus("Не удалось подключиться");
@@ -260,8 +183,9 @@ public class P2PController {
         isCallActive = false;
         btnEnd.setDisable(true);
         btnPushToTalk.setDisable(true);
-        btnCall.setDisable(selectedPeer == null);
+        btnCall.setDisable(false);
         updateStatus("Звонок завершён");
+        log("Звонок завершён");
     }
 
     @FXML
@@ -289,8 +213,10 @@ public class P2PController {
 
     private void updatePeerList() {
         peerList.clear();
-        for (Map.Entry<String, PeerInfo> entry : discovery.getPeers().entrySet()) {
-            peerList.add(entry.getKey() + " (" + entry.getValue().ip + ")");
+        if (discovery != null) {
+            for (Map.Entry<String, PeerInfo> entry : discovery.getPeers().entrySet()) {
+                peerList.add(entry.getKey() + " (" + entry.getValue().ip + ")");
+            }
         }
     }
 
@@ -299,9 +225,10 @@ public class P2PController {
             if (msg.startsWith("CALL_START|")) {
                 try {
                     int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
-                    signaling.send("CALL_ACCEPTED|" + audio.getUdpPort());
+                    signaling.send("CALL_ACCEPTED|" + (audio != null ? audio.getUdpPort() : 0));
                     updateStatus("Входящий звонок");
-                    startAudioStream(selectedPeer != null ? selectedPeer.ip : "unknown", remoteUdp);
+                    log("Входящий вызов");
+                    startAudioStream("127.0.0.1", remoteUdp); // IP уточняется в реальном P2P, здесь fallback
                 } catch (Exception e) {
                     updateStatus("Ошибка обработки вызова");
                 }
@@ -309,9 +236,10 @@ public class P2PController {
                 try {
                     int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
                     updateStatus("Разговор идёт");
-                    startAudioStream(selectedPeer.ip, remoteUdp);
+                    startAudioStream(selectedPeer != null ? selectedPeer.ip : txtTargetIp.getText(), remoteUdp);
+                    log("Собеседник принял вызов");
                 } catch (Exception e) {
-                    updateStatus("Ошибка");
+                    updateStatus("Ошибка аудио");
                 }
             } else if (msg.equals("CALL_END")) {
                 handleEnd();
@@ -320,6 +248,10 @@ public class P2PController {
     }
 
     private void startAudioStream(String ip, int udp) {
+        if (audio == null) {
+            updateStatus("Аудио не доступно");
+            return;
+        }
         try {
             audio.startCall(InetAddress.getByName(ip), udp);
             isCallActive = true;
@@ -327,6 +259,7 @@ public class P2PController {
             btnEnd.setDisable(false);
             btnPushToTalk.setDisable(false);
             updateStatus("Разговор идёт");
+            log("Аудио запущено: " + ip + ":" + udp);
         } catch (Exception e) {
             updateStatus("Ошибка аудио");
         }
@@ -336,9 +269,13 @@ public class P2PController {
         Platform.runLater(() -> txtStatus.setText(status));
     }
 
+    private void log(String message) {
+        System.out.println("[LOG] " + message);
+    }
+
     private void showAlert(String title, String message) {
         Platform.runLater(() -> {
-            Alert alert = new Alert(Alert.AlertType.ERROR);
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
             alert.setTitle(title);
             alert.setHeaderText(null);
             alert.setContentText(message);
@@ -347,9 +284,6 @@ public class P2PController {
     }
 
     public void cleanup() {
-        if (scheduler != null) scheduler.shutdown();
-        if (discovery != null) discovery.stop();
-        if (signaling != null) signaling.stop();
-        if (audio != null) audio.stopCall();
+        handleStop();
     }
 }

@@ -4,52 +4,51 @@
 <?import javafx.scene.layout.*?>
 
 <BorderPane xmlns:fx="http://javafx.com/fxml/1"
-            xmlns="http://javafx.com/javafx/21"
             fx:controller="org.example.lab88_java.P2PController"
-            prefWidth="700" prefHeight="500">
+            prefWidth="680" prefHeight="490">
 
     <top>
-        <GridPane hgap="10" vgap="10">
-            <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+        <GridPane hgap="10" vgap="8" style="-fx-padding: 12;">
+            <!-- Строка 1: Ник и Режим -->
             <Label text="Ник:" GridPane.columnIndex="0" GridPane.rowIndex="0"/>
             <TextField fx:id="txtNick" text="User" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
             <Label text="Режим:" GridPane.columnIndex="2" GridPane.rowIndex="0"/>
-            <ComboBox fx:id="connectionMode" GridPane.columnIndex="3" GridPane.rowIndex="0"/>
-            <Label text="TCP:" GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+            <ComboBox fx:id="cmbMode" GridPane.columnIndex="3" GridPane.rowIndex="0"/>
+
+            <!-- Строка 2: Локальные порты -->
+            <Label text="Мой TCP:" GridPane.columnIndex="0" GridPane.rowIndex="1"/>
             <TextField fx:id="txtTcp" text="5000" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
-            <Label text="UDP:" GridPane.columnIndex="2" GridPane.rowIndex="1"/>
+            <Label text="Мой UDP:" GridPane.columnIndex="2" GridPane.rowIndex="1"/>
             <TextField fx:id="txtUdp" text="5001" GridPane.columnIndex="3" GridPane.rowIndex="1"/>
-            <Label text="Статус:" GridPane.columnIndex="0" GridPane.rowIndex="2"/>
+
+            <!-- Строка 3: Цель для прямого подключения -->
+            <Label text="Цель IP:" GridPane.columnIndex="0" GridPane.rowIndex="2"/>
+            <TextField fx:id="txtTargetIp" promptText="IP собеседника" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+            <Label text="Цель TCP:" GridPane.columnIndex="2" GridPane.rowIndex="2"/>
+            <TextField fx:id="txtTargetPort" promptText="Порт" GridPane.columnIndex="3" GridPane.rowIndex="2"/>
+
+            <!-- Строка 4: Статус -->
+            <Label text="Статус:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
             <TextField fx:id="txtStatus" text="Готов" editable="false"
-                       GridPane.columnIndex="1" GridPane.columnSpan="3" GridPane.rowIndex="2"/>
+                       GridPane.columnIndex="1" GridPane.columnSpan="3" GridPane.rowIndex="3"/>
         </GridPane>
     </top>
 
     <center>
-        <ListView fx:id="listPeers" BorderPane.alignment="CENTER"/>
+        <ListView fx:id="listPeers" style="-fx-padding: 10 12 10 12;"/>
     </center>
 
     <bottom>
-        <VBox spacing="8">
-            <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
-
-            <!-- Настройки сервера (для режима "Сервер") -->
-            <HBox spacing="6" alignment="CENTER_LEFT">
-                <Label text="Сервер:"/>
-                <TextField fx:id="serverIpField" promptText="IP" prefWidth="100"/>
-                <TextField fx:id="serverPortField" promptText="Порт" prefWidth="60"/>
-            </HBox>
-
-            <!-- Кнопки управления -->
-            <HBox spacing="10" alignment="CENTER">
-                <Button fx:id="btnStart" text="Запустить" onAction="#handleStart"/>
-                <Button fx:id="btnCall" text="Позвонить" onAction="#handleCall" disable="true"/>
-                <Button fx:id="btnEnd" text="Завершить" onAction="#handleEnd" disable="true"/>
-                <Button fx:id="btnPushToTalk" text="Push-to-Talk"
-                        onMousePressed="#handlePushStart"
-                        onMouseReleased="#handlePushEnd"
-                        disable="true"/>
-            </HBox>
-        </VBox>
+        <HBox spacing="10" alignment="CENTER" style="-fx-padding: 12;">
+            <Button fx:id="btnStart" text="▶ Запустить" onAction="#handleStart"
+                    style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
+            <Button fx:id="btnStop" text="⏹ Остановить" onAction="#handleStop" disable="true"
+                    style="-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;"/>
+            <Button fx:id="btnCall" text="Позвонить" onAction="#handleCall" disable="true"/>
+            <Button fx:id="btnEnd" text="Завершить" onAction="#handleEnd" disable="true"/>
+            <Button fx:id="btnPushToTalk" text="🎤 Push-to-Talk"
+                    onMousePressed="#handlePushStart" onMouseReleased="#handlePushEnd" disable="true"
+                    style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
+        </HBox>
     </bottom>
 </BorderPane>
