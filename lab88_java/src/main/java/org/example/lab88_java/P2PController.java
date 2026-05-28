@@ -215,19 +215,15 @@ public class P2PController {
         String[] p = msg.split("\\|");
         if (p.length >= 5) {
             String callerNick = p[1];
-            String callerIp = p[2];
-            int callerTcp = Integer.parseInt(p[3]);
-            int callerUdp = Integer.parseInt(p[4]);
-
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.setTitle("Входящий звонок");
                 alert.setContentText("Звонит: " + callerNick + "\nПринять вызов?");
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
-                        // Отправляем подтверждение серверу: CALL_ACCEPT|мойНик|никЗвонящего
                         serverOut.println("CALL_ACCEPT|" + txtNick.getText() + "|" + callerNick);
-                        updateStatus("Вызов принят. Ожидание соединения...");
+                        updateStatus("Вызов принят. Разговор через сервер.");
+                        startRelayCall();  // <-- ЭТО ВАЖНО
                         log("✅ Принят звонок от " + callerNick);
                     } else {
                         serverOut.println("CALL_REJECT|" + callerNick);

@@ -210,8 +210,9 @@ public class VoiceChatServer {
         if (caller != null) {
             caller.out.println("CALL_ACCEPTED|READY");
         }
-        // Добавляем обратную связь, чтобы оба могли отправлять аудио
+        // Разрешаем ретрансляцию в обе стороны
         activeCalls.put(targetNick, callerNick);
+        activeCalls.put(callerNick, targetNick);
     }
 
     private void handleCallReject(String[] parts) {
