@@ -228,7 +228,13 @@ public class VoiceChatServer {
             return;
         }
         String nick = parts[1];
-        int udpPort = Integer.parseInt(parts[2]);
+        int udpPort;
+        try {
+            udpPort = Integer.parseInt(parts[2]);
+        } catch (NumberFormatException e) {
+            System.out.println("SET_UDP_ENDPOINT: неверный порт " + parts[2]);
+            return;
+        }
         ClientInfo ci = clients.get(nick);
         if (ci != null) {
             ci.udpEndpoint = new InetSocketAddress(clientAddr, udpPort);

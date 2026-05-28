@@ -24,6 +24,10 @@ public class AudioManager {
         this.udpPort = udpPort;
         try {
             this.socket = new DatagramSocket(udpPort);
+            System.out.println("AudioManager: запрошен порт " + udpPort + ", реальный порт: " + socket.getLocalPort());
+            if (socket.getLocalPort() != udpPort) {
+                System.err.println("ВНИМАНИЕ: не удалось открыть порт " + udpPort + ", используется " + socket.getLocalPort());
+            }
             this.mic = AudioSystem.getTargetDataLine(FORMAT);
             this.speaker = AudioSystem.getSourceDataLine(FORMAT);
             this.initialized = true;

@@ -100,7 +100,7 @@ public class P2PController {
     private void connectToServer(String nick, int tcp, int udp) {
         new Thread(() -> {
             try {
-                // 1. Сначала создаём AudioManager (он откроет сокет на нужном UDP порту)
+                // 1. Создаём AudioManager ДО любой регистрации
                 audio = new AudioManager(udp);
                 if (!audio.isInitialized()) {
                     Platform.runLater(() -> showAlert("Ошибка", "Не удалось открыть UDP порт " + udp));
@@ -113,7 +113,7 @@ public class P2PController {
                 serverOut = new PrintWriter(serverSocket.getOutputStream(), true);
                 serverIn = new BufferedReader(new InputStreamReader(serverSocket.getInputStream()));
 
-                // 3. Регистрация на сервере
+                // 3. Регистрация (TCP)
                 serverOut.println("REGISTER|" + nick + "|" + tcp + "|" + udp);
                 String resp = serverIn.readLine();
                 if (resp == null || !resp.startsWith("OK")) {
@@ -135,13 +135,12 @@ public class P2PController {
                 int serverPort = Integer.parseInt(txtServerPort.getText());
                 audio.setServerTarget(serverAddr, serverPort);
 
-                // 5. Отправляем дамми-пакет через тот же сокет AudioManager, чтобы сервер запомнил реальный порт
+                // 5. ОТПРАВЛЯЕМ ПОРТ (без дамми-пакета!)
                 serverOut.println("SET_UDP_ENDPOINT|" + finalNick + "|" + udp);
                 serverOut.flush();
-                System.out.println("SET_UDP_ENDPOINT отправлен: " + finalNick + " порт " + udp);
-                log("UDP endpoint отправлен на сервер через AudioManager");
+                log("SET_UDP_ENDPOINT отправлен: " + finalNick + " порт " + udp);
 
-                // 6. Запускаем TCP сигналинг (для LAN режима, не критично)
+                // 6. Запускаем TCP сигналинг (для LAN, не критично)
                 signaling = new TCPSignaling(tcp, this::onSignal);
                 signaling.startServer();
 
