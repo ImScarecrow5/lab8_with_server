@@ -3,7 +3,6 @@ package org.example.lab88_java;
 import java.io.IOException;
 import java.net.*;
 import java.util.concurrent.*;
-import java.util.function.Consumer;
 
 public class MulticastDiscovery {
     private static final String GROUP = "230.0.0.1";
@@ -12,12 +11,9 @@ public class MulticastDiscovery {
     private final String myNickname, myIp;
     private final int myTcpPort;
     private final ConcurrentMap<String, PeerInfo> peers = new ConcurrentHashMap<>();
-
     private MulticastSocket socket;
     private volatile boolean running = false;
-
-    // Callback для обновления UI
-    private Consumer<PeerInfo> onPeerUpdate;
+    private ScheduledExecutorService scheduler;
 
     public MulticastDiscovery(String nickname, int tcpPort) throws IOException {
         this.myNickname = nickname;
@@ -28,15 +24,11 @@ public class MulticastDiscovery {
         this.socket.setSoTimeout(1000);
     }
 
-    public void setOnPeerUpdate(Consumer<PeerInfo> callback) {
-        this.onPeerUpdate = callback;
-    }
-
     public void start() {
         running = true;
-        new Thread(this::listenLoop).start();
+        new Thread(this::listenLoop, "MulticastListener").start();
 
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+        scheduler = Executors.newScheduledThreadPool(1);
         scheduler.scheduleAtFixedRate(this::broadcastHello, 0, 3, TimeUnit.SECONDS);
         scheduler.scheduleAtFixedRate(this::checkHeartbeat, 5, 5, TimeUnit.SECONDS);
     }
@@ -52,18 +44,11 @@ public class MulticastDiscovery {
                 if (msg.startsWith("HELLO|")) {
                     String[] parts = msg.split("\\|");
                     if (parts.length == 4) {
-                        String nick = parts[1], ip = parts[2];
+                        String nick = parts[1];
+                        String ip = parts[2];
                         int port = Integer.parseInt(parts[3]);
 
-                        // Не добавляем себя
-                        if (ip.equals(myIp) && port == myTcpPort) continue;
-
-                        String key = nick;
-                        peers.put(key, new PeerInfo(nick, ip, port, myTcpPort));
-
-                        if (onPeerUpdate != null) {
-                            onPeerUpdate.accept(peers.get(key));
-                        }
+                        peers.put(nick, new PeerInfo(nick, ip, port, (int) System.currentTimeMillis()));
                     }
                 }
             } catch (IOException ignored) {}
@@ -73,8 +58,7 @@ public class MulticastDiscovery {
     private void broadcastHello() {
         try {
             String msg = "HELLO|" + myNickname + "|" + myIp + "|" + myTcpPort;
-            socket.send(new DatagramPacket(msg.getBytes(), msg.length(),
-                    InetAddress.getByName(GROUP), PORT));
+            socket.send(new DatagramPacket(msg.getBytes(), msg.length(), InetAddress.getByName(GROUP), PORT));
         } catch (IOException ignored) {}
     }
 
@@ -89,6 +73,7 @@ public class MulticastDiscovery {
 
     public void stop() {
         running = false;
+        if (scheduler != null) scheduler.shutdownNow();
         socket.close();
     }
 }
