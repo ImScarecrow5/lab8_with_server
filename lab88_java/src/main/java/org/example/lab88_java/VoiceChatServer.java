@@ -79,26 +79,23 @@ public class VoiceChatServer {
             try {
                 DatagramPacket packet = new DatagramPacket(buf, buf.length);
                 udpRelaySocket.receive(packet);
-                // Определяем, от кого пришёл пакет
                 InetSocketAddress senderAddr = new InetSocketAddress(packet.getAddress(), packet.getPort());
                 ClientInfo sender = findClientByUdpEndpoint(senderAddr);
                 if (sender == null) {
-                    // возможно, клиент ещё не зарегистрировал UDP endpoint – игнорируем
+                    System.out.println("UDP от неизвестного: " + senderAddr);
                     continue;
                 }
-                // Ищем активный вызов для этого отправителя
-                ClientInfo target = getCallTarget(sender.nickname);
+                String targetNick = activeCalls.get(sender.nickname);
+                ClientInfo target = (targetNick != null) ? clients.get(targetNick) : null;
                 if (target != null && target.udpEndpoint != null) {
-                    // Пересылаем пакет целевому клиенту
-                    DatagramPacket forward = new DatagramPacket(
-                            packet.getData(), packet.getLength(),
-                            target.udpEndpoint.getAddress(), target.udpEndpoint.getPort()
-                    );
+                    DatagramPacket forward = new DatagramPacket(packet.getData(), packet.getLength(),
+                            target.udpEndpoint.getAddress(), target.udpEndpoint.getPort());
                     udpRelaySocket.send(forward);
+                    System.out.println("Relay " + sender.nickname + " -> " + targetNick + ", bytes=" + packet.getLength());
+                } else {
+                    System.out.println("Нет цели для " + sender.nickname + " (activeCalls=" + activeCalls + ")");
                 }
-            } catch (IOException e) {
-                if (running) e.printStackTrace();
-            }
+            } catch (IOException e) { if (running) e.printStackTrace(); }
         }
     }
 
@@ -211,8 +208,10 @@ public class VoiceChatServer {
             caller.out.println("CALL_ACCEPTED|READY");
         }
         // Разрешаем ретрансляцию в обе стороны
+        System.out.println("CALL_ACCEPT от " + targetNick + " для " + callerNick);
         activeCalls.put(targetNick, callerNick);
         activeCalls.put(callerNick, targetNick);
+        System.out.println("activeCalls теперь: " + activeCalls);
     }
 
     private void handleCallReject(String[] parts) {

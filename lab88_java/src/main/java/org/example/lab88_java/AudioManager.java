@@ -97,15 +97,24 @@ public class AudioManager {
 
     private void captureAndSend() {
         byte[] buf = new byte[1024];
+        long lastLog = System.currentTimeMillis();
+        int totalSent = 0;
         while (running) {
             if (isTalking.get()) {
                 int count = mic.read(buf, 0, buf.length);
                 if (count > 0) {
                     try {
                         InetAddress targetIp = (serverIp != null) ? serverIp : remoteIp;
-                        int targetPort = (serverIp != null) ? serverUdpPort : remoteUdpPort;
+                        int targetPort = (serverIp != null) ? serverPort : remoteUdpPort;
                         socket.send(new DatagramPacket(buf, count, targetIp, targetPort));
+                        totalSent += count;
+                        if (System.currentTimeMillis() - lastLog > 1000) {
+                            System.out.println("Отправлено байт за сек: " + totalSent);
+                            totalSent = 0;
+                            lastLog = System.currentTimeMillis();
+                        }
                     } catch (IOException e) {
+                        System.err.println("Ошибка отправки: " + e);
                         break;
                     }
                 }

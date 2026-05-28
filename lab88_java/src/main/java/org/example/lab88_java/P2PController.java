@@ -197,6 +197,7 @@ public class P2PController {
     }
 
     private void startRelayCall() {
+        audio.setTalking(true);   // принудительно включаем передачу
         if (audio == null) {
             log("AudioManager не инициализирован");
             return;
