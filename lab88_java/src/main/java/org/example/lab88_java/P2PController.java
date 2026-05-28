@@ -171,21 +171,46 @@ public class P2PController {
 
     private void handleIncomingCall(String msg) {
         final String[] p = msg.split("\\|");
-        if (p.length >= 3) {
+        // Ожидаем: INCOMING_CALL|Ник|IP|TCP|UDP
+        if (p.length >= 5) {
             final String callerNick = p[1];
+            final String callerIp = p[2];
+            final int callerTcp = Integer.parseInt(p[3]);
+            final int callerUdp = Integer.parseInt(p[4]);
+
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.setTitle("Входящий звонок");
                 alert.setHeaderText(null);
                 alert.setContentText("Звонит: " + callerNick + "\nПринять вызов?");
+
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
                         serverOut.println("CALL_ACCEPT|" + callerNick + "|" + audio.getUdpPort());
-                        updateStatus("Принят звонок от " + callerNick);
-                        log("Входящий звонок принят");
+
+                        isCallActive = true;
+                        btnCall.setDisable(true);
+                        btnEnd.setDisable(false);
+                        btnPushToTalk.setDisable(false);
+                        updateStatus("Соединение с " + callerNick + "...");
+                        log("✅ Принят звонок от " + callerNick);
+
+                        new Thread(() -> {
+                            boolean connected = signaling.connect(callerIp, callerTcp);
+                            Platform.runLater(() -> {
+                                if (connected) {
+                                    signaling.send("CALL_ACCEPTED|" + audio.getUdpPort());
+                                    startAudioStream(callerIp, callerUdp);
+                                    updateStatus("💬 Разговор с " + callerNick);
+                                } else {
+                                    updateStatus(" Не удалось соединиться");
+                                    handleEnd();
+                                }
+                            });
+                        }).start();
                     } else {
                         serverOut.println("CALL_REJECT|" + callerNick);
-                        updateStatus("Отклонён звонок");
+                        updateStatus("Звонок отклонён");
                     }
                 });
             });

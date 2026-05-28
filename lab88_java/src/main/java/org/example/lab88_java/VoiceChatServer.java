@@ -118,7 +118,9 @@ public class VoiceChatServer {
     }
 
     private void handleCall(PrintWriter out, String[] parts, ClientInfo caller) {
-        if (parts.length < 3 || caller == null) { out.println("ERROR|Неверные параметры"); return; }
+        if (parts.length < 3 || caller == null) {
+            out.println("ERROR|Неверные параметры"); return;
+        }
         String targetNick = parts[1];
         int callerUdp = Integer.parseInt(parts[2]);
         ClientInfo target = clients.get(targetNick);
@@ -126,7 +128,9 @@ public class VoiceChatServer {
         if (target == null || !target.isAlive()) {
             out.println("ERROR|Пользователь не в сети"); return;
         }
-        target.out.println("INCOMING_CALL|" + caller.nickname + "|" + callerUdp);
+
+        target.out.println("INCOMING_CALL|" + caller.nickname + "|" + caller.publicIp + "|" + caller.tcpPort + "|" + callerUdp);
+
         out.println("CALL_DATA|" + target.publicIp + "|" + target.tcpPort + "|" + target.udpPort + "|" + callerUdp);
         System.out.println("CALL: " + caller.nickname + " -> " + targetNick);
     }
