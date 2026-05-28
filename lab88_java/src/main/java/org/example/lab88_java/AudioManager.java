@@ -105,7 +105,7 @@ public class AudioManager {
                 if (count > 0) {
                     try {
                         InetAddress targetIp = (serverIp != null) ? serverIp : remoteIp;
-                        int targetPort = (serverIp != null) ? serverPort : remoteUdpPort;
+                        int targetPort = (serverIp != null) ? serverUdpPort : remoteUdpPort;
                         socket.send(new DatagramPacket(buf, count, targetIp, targetPort));
                         totalSent += count;
                         if (System.currentTimeMillis() - lastLog > 1000) {
