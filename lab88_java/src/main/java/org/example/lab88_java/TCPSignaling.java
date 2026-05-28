@@ -29,18 +29,20 @@ public class TCPSignaling {
             } catch (IOException ignored) {}
         }).start();
     }
-
+    
     public boolean connect(String ip, int port) {
         try {
-            System.out.println("Подключение к " + ip + ":" + port);
-            activeSocket = new Socket(ip, port);
+            activeSocket = new Socket();
+            activeSocket.connect(new InetSocketAddress(ip, port), 5000); // 5 сек таймаут
+            activeSocket.setSoTimeout(10000);
+
             out = new PrintWriter(activeSocket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(activeSocket.getInputStream()));
-            System.out.println("TCP соединение установлено");
+
             new Thread(this::readLoop).start();
             return true;
         } catch (IOException e) {
-            return false;
+            return false; // Вернёт false при timeout или отказе
         }
     }
 
@@ -68,6 +70,6 @@ public class TCPSignaling {
 
     public void stop() {
         listening = false;
-        try { serverSocket.close(); } catch (IOException ignored) {}
+        try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) {}
     }
 }
