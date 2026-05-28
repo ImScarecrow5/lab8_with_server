@@ -171,7 +171,6 @@ public class P2PController {
 
     private void handleIncomingCall(String msg) {
         final String[] p = msg.split("\\|");
-        // Ожидаем: INCOMING_CALL|Ник|IP|TCP|UDP
         if (p.length >= 5) {
             final String callerNick = p[1];
             final String callerIp = p[2];
@@ -181,33 +180,14 @@ public class P2PController {
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.setTitle("Входящий звонок");
-                alert.setHeaderText(null);
                 alert.setContentText("Звонит: " + callerNick + "\nПринять вызов?");
-
                 alert.showAndWait().ifPresent(response -> {
                     if (response == ButtonType.OK) {
+                        // Сообщаем серверу, что вызов принят
                         serverOut.println("CALL_ACCEPT|" + callerNick + "|" + audio.getUdpPort());
-
-                        isCallActive = true;
-                        btnCall.setDisable(true);
-                        btnEnd.setDisable(false);
-                        btnPushToTalk.setDisable(false);
-                        updateStatus("Соединение с " + callerNick + "...");
+                        updateStatus("Ожидание соединения от " + callerNick + "...");
                         log("✅ Принят звонок от " + callerNick);
-
-                        new Thread(() -> {
-                            boolean connected = signaling.connect(callerIp, callerTcp);
-                            Platform.runLater(() -> {
-                                if (connected) {
-                                    signaling.send("CALL_ACCEPTED|" + audio.getUdpPort());
-                                    startAudioStream(callerIp, callerUdp);
-                                    updateStatus("💬 Разговор с " + callerNick);
-                                } else {
-                                    updateStatus(" Не удалось соединиться");
-                                    handleEnd();
-                                }
-                            });
-                        }).start();
+                        // НЕ вызываем signaling.connect() – ждём входящего TCP
                     } else {
                         serverOut.println("CALL_REJECT|" + callerNick);
                         updateStatus("Звонок отклонён");
@@ -320,12 +300,10 @@ public class P2PController {
                     log("Входящий звонок (LAN)");
                 } catch (Exception e) { log("Ошибка вызова"); }
             } else if (msg.startsWith("CALL_ACCEPTED|")) {
-                try {
-                    final int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
-                    final String ip = selectedPeer != null ? selectedPeer.ip : (foundServerPeer != null ? foundServerPeer.ip : "127.0.0.1");
-                    startAudioStream(ip, remoteUdp);
-                    log("Разговор начался");
-                } catch (Exception e) { log("Ошибка аудио"); }
+                int remoteUdp = Integer.parseInt(msg.split("\\|")[1]);
+                String ip = (selectedPeer != null) ? selectedPeer.ip : foundServerPeer.ip;
+                startAudioStream(ip, remoteUdp);
+                log("Разговор начался");
             } else if (msg.equals("CALL_END")) {
                 handleEnd();
             }

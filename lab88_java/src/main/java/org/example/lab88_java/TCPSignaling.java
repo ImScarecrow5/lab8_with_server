@@ -29,20 +29,21 @@ public class TCPSignaling {
             } catch (IOException ignored) {}
         }).start();
     }
-    
+
     public boolean connect(String ip, int port) {
         try {
+            if (activeSocket != null && !activeSocket.isClosed()) {
+                activeSocket.close();
+            }
             activeSocket = new Socket();
-            activeSocket.connect(new InetSocketAddress(ip, port), 5000); // 5 сек таймаут
+            activeSocket.connect(new InetSocketAddress(ip, port), 5000);
             activeSocket.setSoTimeout(10000);
-
             out = new PrintWriter(activeSocket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(activeSocket.getInputStream()));
-
             new Thread(this::readLoop).start();
             return true;
         } catch (IOException e) {
-            return false; // Вернёт false при timeout или отказе
+            return false;
         }
     }
 
